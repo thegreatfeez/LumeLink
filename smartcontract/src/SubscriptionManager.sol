@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
-import {CreatorRegistry} from "/src/CreatorRegistry.sol";
+import {CreatorRegistry} from "./CreatorRegistry.sol";
 
 contract SubscriptionManager {
     error SubscriptionManager__CreatorDoesNotExist();
@@ -24,30 +24,44 @@ contract SubscriptionManager {
         treasury = _treasury;
     }
 
-    /* **Key Functions:**
-    1. `setSubscriptionPrice(uint256 _price)` - Creator sets their monthly price
-    2. `subscribe(address _creator)` - User subscribes, pays, gets 30 days
-    3. `isSubscribed(address _subscriber, address _creator)` - Check active subscription
-    4. `getSubscriptionExpiry(...)` - View when subscription ends
-
-    ### **Payment Flow in `subscribe()`:**
-    ```
-    1. Check creator exists (call CreatorRegistry)
-    2. Check msg.value == creator's price
-    3. Calculate expiry (block.timestamp + 30 days)
-    4. Store subscription
-    5. Send 10% to Treasury
-    6. Send 90% to Creator
-    7. Emit event
-    */
-
     function setSubscriptionPrice(uint256 _price) public {
-
-        if(!creatorRegistry.isCreator(msg.sender)) revert SubscriptionManager__CreatorDoesNotExist();
-        if(_price < MINIMUM_SUB_PRICE) revert SubscriptionManager__MinimumSubPriceNotMet();
+        if (!creatorRegistry.isCreator(msg.sender)) revert SubscriptionManager__CreatorDoesNotExist();
+        if (_price < MINIMUM_SUB_PRICE) revert SubscriptionManager__MinimumSubPriceNotMet();
 
         creatorPrices[msg.sender] = _price;
 
         emit SubscriptionPriceSet(msg.sender, _price);
+    }
+
+    function subscribe(address _creator) public payable {
+        if (!creatorRegistry.isCreator(_creator)) revert SubscriptionManager__CreatorDoesNotExist();
+        if (!(creatorPrices[_creator] > 0)) revert SubscriptionManager__MinimumSubPriceNotMet();
+        if (msg.value != creatorPrices[_creator]) revert SubscriptionManager__IncorrectPaymentAmount();
+
+        uint256 platformFee = (msg.value * 10) / 100;
+        uint256 creatorAmount = msg.value - platformFee;
+        uint256 expiringTime = block.timestamp + SUB_DURATION;
+
+        if (subscriptions[msg.sender][_creator] < block.timestamp) {
+            subscriptions[msg.sender][_creator] = expiringTime;
+        } else {
+            subscriptions[msg.sender][_creator] += SUB_DURATION;
+        }
+
+        (bool treasurySuccess,) = treasury.call{value: platformFee}("");
+        require(treasurySuccess, "Treasury transfer failed");
+
+        (bool creatorSuccess,) = _creator.call{value: creatorAmount}("");
+        require(creatorSuccess, "Creator transfer failed");
+
+        emit Subscribed(msg.sender, _creator, msg.value, subscriptions[msg.sender][_creator]);
+    }
+
+    function isSubscribed(address _subscriber, address _creator) external view returns (bool) {
+        return subscriptions[_subscriber][_creator] > block.timestamp;
+    }
+
+    function getSubscriptionExpiry(address _subscriber, address _creator) external view returns (uint256) {
+        return subscriptions[_subscriber][_creator];
     }
 }
