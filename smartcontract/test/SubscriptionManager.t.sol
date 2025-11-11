@@ -67,7 +67,7 @@ contract SubscriptionManagerTest is Test {
     function testSetSubscriptionPriceEmitsEvent() public {
         vm.expectEmit(true, false, false, true);
         emit SubscriptionPriceSet(creator, SUBSCRIPTION_PRICE);
-        
+
         vm.prank(creator);
         subscriptionManager.setSubscriptionPrice(SUBSCRIPTION_PRICE);
     }
@@ -87,31 +87,27 @@ contract SubscriptionManagerTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function testSubscribe() public {
-        
         vm.prank(creator);
         subscriptionManager.setSubscriptionPrice(SUBSCRIPTION_PRICE);
 
-       
         uint256 expectedExpiry = block.timestamp + SUB_DURATION;
-        
+
         vm.prank(subscriber);
         subscriptionManager.subscribe{value: SUBSCRIPTION_PRICE}(creator);
 
-        
         assertTrue(subscriptionManager.isSubscribed(subscriber, creator));
         assertEq(subscriptionManager.getSubscriptionExpiry(subscriber, creator), expectedExpiry);
     }
 
     function testSubscribeRevertsForNonExistentCreator() public {
         address fakeCreator = makeAddr("fakeCreator");
-        
+
         vm.expectRevert(SubscriptionManager__CreatorDoesNotExist.selector);
         vm.prank(subscriber);
         subscriptionManager.subscribe{value: SUBSCRIPTION_PRICE}(fakeCreator);
     }
 
     function testSubscribeRevertsIfCreatorHasNoPrice() public {
-        
         vm.expectRevert(SubscriptionManager__MinimumSubPriceNotMet.selector);
         vm.prank(subscriber);
         subscriptionManager.subscribe{value: SUBSCRIPTION_PRICE}(creator);
@@ -193,7 +189,7 @@ contract SubscriptionManagerTest is Test {
 
         // Resubscribe (should start from current time)
         uint256 expectedNewExpiry = block.timestamp + SUB_DURATION;
-        
+
         vm.prank(subscriber);
         subscriptionManager.subscribe{value: SUBSCRIPTION_PRICE}(creator);
 
@@ -224,14 +220,14 @@ contract SubscriptionManagerTest is Test {
         // Create second creator
         address creator2 = makeAddr("creator2");
         vm.deal(creator2, 10 ether);
-        
+
         vm.prank(creator2);
         creatorRegistry.registerCreator("ipfs://creator2");
 
         // Both creators set prices
         vm.prank(creator);
         subscriptionManager.setSubscriptionPrice(SUBSCRIPTION_PRICE);
-        
+
         vm.prank(creator2);
         subscriptionManager.setSubscriptionPrice(0.02 ether);
 
@@ -315,7 +311,7 @@ contract SubscriptionManagerTest is Test {
         }
 
         uint256 finalExpiry = subscriptionManager.getSubscriptionExpiry(subscriber, creator);
-        
+
         // Should be 90 days from first subscription (3 x 30 days added)
         assertEq(finalExpiry, firstExpiry + (SUB_DURATION * 3));
     }
