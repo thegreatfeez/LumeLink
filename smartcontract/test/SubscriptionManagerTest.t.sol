@@ -4,37 +4,40 @@ pragma solidity ^0.8.20;
 import {Test, console} from "forge-std/Test.sol";
 import {SubscriptionManager} from "../src/SubscriptionManager.sol";
 import {CreatorRegistry} from "../src/CreatorRegistry.sol";
+import {Treasury} from "../src/Treasury.sol";
 
 contract SubscriptionManagerTest is Test {
-    error SubscriptionManager__CreatorDoesNotExist();
-    error SubscriptionManager__MinimumSubPriceNotMet();
-    error SubscriptionManager__IncorrectPaymentAmount();
+  error SubscriptionManager__CreatorDoesNotExist();
+error SubscriptionManager__MinimumSubPriceNotMet();
+error SubscriptionManager__IncorrectPaymentAmount();
 
-    SubscriptionManager public subscriptionManager;
-    CreatorRegistry public creatorRegistry;
+SubscriptionManager public subscriptionManager;
+CreatorRegistry public creatorRegistry;
+Treasury public treasury;
 
-    string constant METADATA_URI = "https://api.spotchain.com/creator/1";
+string constant METADATA_URI = "https://api.spotchain.com/creator/1";
 
-    address treasury = makeAddr("treasury");
-    address creator = makeAddr("creator");
-    address subscriber = makeAddr("subscriber");
 
-    uint256 constant SUBSCRIPTION_PRICE = 0.01 ether;
-    uint256 constant MINIMUM_SUB_PRICE = 0.001 ether;
-    uint256 constant SUB_DURATION = 30 days;
+address creator = makeAddr("creator");
+address subscriber = makeAddr("subscriber");
 
-    event Subscribed(address indexed subscriber, address indexed creator, uint256 amount, uint256 expiryTime);
-    event SubscriptionPriceSet(address indexed creator, uint256 newPrice);
+uint256 constant SUBSCRIPTION_PRICE = 0.01 ether;
+uint256 constant MINIMUM_SUB_PRICE = 0.001 ether;
+uint256 constant SUB_DURATION = 30 days;
 
-    function setUp() public {
-        creatorRegistry = new CreatorRegistry();
-        subscriptionManager = new SubscriptionManager(address(creatorRegistry), treasury);
+event Subscribed(address indexed subscriber, address indexed creator, uint256 amount, uint256 expiryTime);
+event SubscriptionPriceSet(address indexed creator, uint256 newPrice);
 
-        vm.deal(creator, 10 ether);
-        vm.deal(subscriber, 10 ether);
+function setUp() public {
+    creatorRegistry = new CreatorRegistry();
+    treasury = new Treasury();
+    subscriptionManager = new SubscriptionManager(address(creatorRegistry), address(treasury));
 
-        vm.prank(creator);
-        creatorRegistry.registerCreator(METADATA_URI);
+    vm.deal(creator, 10 ether);
+    vm.deal(subscriber, 10 ether);
+
+    vm.prank(creator);
+    creatorRegistry.registerCreator(METADATA_URI);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -119,23 +122,23 @@ contract SubscriptionManagerTest is Test {
 
         vm.expectRevert(SubscriptionManager__IncorrectPaymentAmount.selector);
         vm.prank(subscriber);
-        subscriptionManager.subscribe{value: 0.005 ether}(creator); // Wrong amount
+        subscriptionManager.subscribe{value: 0.005 ether}(creator);
     }
 
     function testSubscribePaymentSplit() public {
         vm.prank(creator);
         subscriptionManager.setSubscriptionPrice(SUBSCRIPTION_PRICE);
 
-        uint256 treasuryBalanceBefore = treasury.balance;
+        uint256 treasuryBalanceBefore = address(treasury).balance;
         uint256 creatorBalanceBefore = creator.balance;
 
         vm.prank(subscriber);
         subscriptionManager.subscribe{value: SUBSCRIPTION_PRICE}(creator);
 
-        uint256 expectedPlatformFee = (SUBSCRIPTION_PRICE * 10) / 100; // 10%
-        uint256 expectedCreatorAmount = SUBSCRIPTION_PRICE - expectedPlatformFee; // 90%
+        uint256 expectedPlatformFee = (SUBSCRIPTION_PRICE * 10) / 100; 
+        uint256 expectedCreatorAmount = SUBSCRIPTION_PRICE - expectedPlatformFee;
 
-        assertEq(treasury.balance - treasuryBalanceBefore, expectedPlatformFee);
+        assertEq(address(treasury).balance - treasuryBalanceBefore, expectedPlatformFee);
         assertEq(creator.balance - creatorBalanceBefore, expectedCreatorAmount);
     }
 
@@ -305,14 +308,14 @@ contract SubscriptionManagerTest is Test {
 
         // Renew 3 times
         for (uint256 i = 0; i < 3; i++) {
-            vm.warp(block.timestamp + 5 days); // Fast forward 5 days each time
+            vm.warp(block.timestamp + 5 days);
             vm.prank(subscriber);
             subscriptionManager.subscribe{value: SUBSCRIPTION_PRICE}(creator);
         }
 
         uint256 finalExpiry = subscriptionManager.getSubscriptionExpiry(subscriber, creator);
 
-        // Should be 90 days from first subscription (3 x 30 days added)
+       
         assertEq(finalExpiry, firstExpiry + (SUB_DURATION * 3));
     }
 }

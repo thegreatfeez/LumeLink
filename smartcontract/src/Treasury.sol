@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-
 contract Treasury is ReentrancyGuard {
     error Treasury__OnlyOwnerCanWithdraw();
     error Treasury__WithdrawalFailed();
@@ -29,29 +28,29 @@ contract Treasury is ReentrancyGuard {
     }
 
     function withdraw() external nonReentrant {
-        if(msg.sender != owner) revert Treasury__OnlyOwnerCanWithdraw();
-        
-        uint256 balance = address(this).balance;
-        if(balance == 0) revert Treasury__NoFeesToWithdraw();
+        if (msg.sender != owner) revert Treasury__OnlyOwnerCanWithdraw();
 
-        (bool success, ) = payable(owner).call{value: balance}("");
-        if(!success) revert Treasury__WithdrawalFailed();
-        
+        uint256 balance = address(this).balance;
+        if (balance == 0) revert Treasury__NoFeesToWithdraw();
+
+        (bool success,) = payable(owner).call{value: balance}("");
+        if (!success) revert Treasury__WithdrawalFailed();
+
         emit FeesWithdrawn(owner, balance, true);
     }
 
     function withdrawTo(address _recipient, uint256 _amount) external nonReentrant {
-        if(msg.sender != owner) revert Treasury__OnlyOwnerCanWithdraw();
-        if(_amount == 0) revert Treasury__InvalidAmount();
-        if(_amount > address(this).balance) revert Treasury__InsufficientBalance();
+        if (msg.sender != owner) revert Treasury__OnlyOwnerCanWithdraw();
+        if (_amount == 0) revert Treasury__InvalidAmount();
+        if (_amount > address(this).balance) revert Treasury__InsufficientBalance();
 
-        (bool success, ) = payable(_recipient).call{value: _amount}("");
-        if(!success) revert Treasury__WithdrawalFailed();
-        
+        (bool success,) = payable(_recipient).call{value: _amount}("");
+        if (!success) revert Treasury__WithdrawalFailed();
+
         emit FeesWithdrawn(_recipient, _amount, false);
     }
 
-    function getBalance() public view returns(uint256) {
+    function getBalance() public view returns (uint256) {
         return address(this).balance;
     }
 }

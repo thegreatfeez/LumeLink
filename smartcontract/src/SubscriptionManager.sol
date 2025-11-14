@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 import {CreatorRegistry} from "./CreatorRegistry.sol";
+import {Treasury} from "./Treasury.sol";
 
 contract SubscriptionManager {
     error SubscriptionManager__CreatorDoesNotExist();
@@ -11,7 +12,7 @@ contract SubscriptionManager {
     event SubscriptionPriceSet(address indexed creator, uint256 newPrice);
 
     CreatorRegistry public immutable creatorRegistry;
-    address public immutable treasury;
+    Treasury public immutable treasury;
 
     mapping(address subscriber => mapping(address creator => uint256 expiryTime)) public subscriptions;
     mapping(address creator => uint256 monthlyPrice) public creatorPrices;
@@ -21,7 +22,7 @@ contract SubscriptionManager {
 
     constructor(address _creatorRegistry, address _treasury) {
         creatorRegistry = CreatorRegistry(_creatorRegistry);
-        treasury = _treasury;
+        treasury = Treasury(_treasury);
     }
 
     function setSubscriptionPrice(uint256 _price) public {
@@ -40,17 +41,17 @@ contract SubscriptionManager {
 
         uint256 platformFee = (msg.value * 10) / 100;
         uint256 creatorAmount = msg.value - platformFee;
-        uint256 expiringTime = block.timestamp + SUB_DURATION;
 
         if (subscriptions[msg.sender][_creator] < block.timestamp) {
-            subscriptions[msg.sender][_creator] = expiringTime;
+            subscriptions[msg.sender][_creator] = block.timestamp + SUB_DURATION;
         } else {
             subscriptions[msg.sender][_creator] += SUB_DURATION;
         }
 
-        (bool treasurySuccess,) = treasury.call{value: platformFee}("");
-        require(treasurySuccess, "Treasury transfer failed");
+        // Send 10% to Treasury with creator tracking
+        treasury.receiveFee{value: platformFee}(_creator);
 
+        // Send 90% to creator
         (bool creatorSuccess,) = _creator.call{value: creatorAmount}("");
         require(creatorSuccess, "Creator transfer failed");
 
