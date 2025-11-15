@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test, console} from "forge-std/Test.sol";
 import {SpotlightSelector} from "../src/SpotlightSelector.sol";
 import {CreatorRegistry} from "../src/CreatorRegistry.sol";
-import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
+import {VRFCoordinatorV2_5Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2_5Mock.sol";
 
 contract SpotlightSelectorTest is Test {
     /*//////////////////////////////////////////////////////////////
@@ -27,12 +27,13 @@ contract SpotlightSelectorTest is Test {
     //////////////////////////////////////////////////////////////*/
     SpotlightSelector public spotlightSelector;
     CreatorRegistry public creatorRegistry;
-    VRFCoordinatorV2Mock public vrfCoordinator;
+    VRFCoordinatorV2_5Mock public vrfCoordinator;
 
-    // Chainlink VRF parameters
-    uint96 constant MOCK_BASE_FEE = 0.25 ether;
+    // Chainlink VRF parameters (reduced for testing)
+    uint96 constant MOCK_BASE_FEE = 0.001 ether;
     uint96 constant MOCK_GAS_PRICE_LINK = 1e9;
-    uint64 subscriptionId;
+    int256 constant MOCK_WEI_PER_UNIT_LINK = 4e15;
+    uint256 subscriptionId;
     bytes32 constant KEY_HASH = bytes32(uint256(1));
     uint32 constant CALLBACK_GAS_LIMIT = 1000000;
 
@@ -49,12 +50,20 @@ contract SpotlightSelectorTest is Test {
     address creator6 = makeAddr("creator6");
 
     function setUp() public {
-        // Deploy mock VRF Coordinator
-        vrfCoordinator = new VRFCoordinatorV2Mock(MOCK_BASE_FEE, MOCK_GAS_PRICE_LINK);
+        // Give test contract ETH for funding subscription
+        vm.deal(address(this), 1000 ether);
+        
+        // Deploy mock VRF Coordinator v2.5
+        vrfCoordinator = new VRFCoordinatorV2_5Mock(
+            MOCK_BASE_FEE,
+            MOCK_GAS_PRICE_LINK,
+            MOCK_WEI_PER_UNIT_LINK
+        );
 
-        // Create and fund subscription
+        // Create and fund subscription (v2.5 needs both LINK and native ETH)
         subscriptionId = vrfCoordinator.createSubscription();
-        vrfCoordinator.fundSubscription(subscriptionId, 100 ether);
+        vrfCoordinator.fundSubscription(subscriptionId, 100 ether); // LINK
+        vrfCoordinator.fundSubscriptionWithNative{value: 100 ether}(subscriptionId); // Native ETH
 
         // Deploy CreatorRegistry
         creatorRegistry = new CreatorRegistry();
@@ -108,13 +117,12 @@ contract SpotlightSelectorTest is Test {
     //////////////////////////////////////////////////////////////*/
     function testConstructorSetsCorrectInitialState() public {
         assertEq(uint256(spotlightSelector.getSelectionStatus()), uint256(SpotlightSelector.SelectionStatus.IDLE));
-        assertEq(spotlightSelector.lastSelectionTimestamp(), 0); // Changed from block.timestamp to 0
+        assertEq(spotlightSelector.lastSelectionTimestamp(), 0);
         assertEq(spotlightSelector.FEATURED_SLOTS(), 5);
         assertEq(spotlightSelector.SELECTION_INTERVAL(), 7 days);
     }
 
     function testConstructorSetsCorrectContracts() public view {
-        // Check that registry is set (by trying to call it)
         assertTrue(address(spotlightSelector) != address(0));
     }
 
@@ -136,27 +144,21 @@ contract SpotlightSelectorTest is Test {
     }
 
     function testRequestRandomWinnerRevertsIfTooSoon() public {
-        // First request
-        spotlightSelector.requestRandomWinner();
-        vrfCoordinator.fulfillRandomWords(1, address(spotlightSelector));
+        _requestAndFulfillRandomness();
 
-        // Try second request immediately (should fail)
         vm.expectRevert(SpotlightSelector__SelectionTooSoon.selector);
         spotlightSelector.requestRandomWinner();
     }
 
     function testRequestRandomWinnerRevertsIfAlreadySelecting() public {
-        // Start selection
         spotlightSelector.requestRandomWinner();
 
-        // Try to request again before fulfillment
-        vm.warp(block.timestamp + 8 days); // Past the interval
+        vm.warp(block.timestamp + 8 days);
         vm.expectRevert(SpotlightSelector__AlreadySelecting.selector);
         spotlightSelector.requestRandomWinner();
     }
 
     function testRequestRandomWinnerRevertsWithNoCreators() public {
-        // Deploy new registry with no creators
         CreatorRegistry emptyRegistry = new CreatorRegistry();
 
         SpotlightSelector emptySelector = new SpotlightSelector(
@@ -170,13 +172,10 @@ contract SpotlightSelectorTest is Test {
     }
 
     function testRequestRandomWinnerWorksAfterInterval() public {
-        // First selection
         _requestAndFulfillRandomness();
 
-        // Fast forward past interval
         vm.warp(block.timestamp + SELECTION_INTERVAL + 1);
 
-        // Should work now
         uint256 requestId = spotlightSelector.requestRandomWinner();
         assertTrue(requestId > 0);
     }
@@ -187,10 +186,8 @@ contract SpotlightSelectorTest is Test {
     function testFulfillRandomWordsSelectsCreators() public {
         uint256 requestId = spotlightSelector.requestRandomWinner();
 
-        // Fulfill the request
         vrfCoordinator.fulfillRandomWords(requestId, address(spotlightSelector));
 
-        // Check that creators were selected
         address[] memory featured = spotlightSelector.getCurrentFeatured();
         assertEq(featured.length, FEATURED_SLOTS);
     }
@@ -198,12 +195,10 @@ contract SpotlightSelectorTest is Test {
     function testFulfillRandomWordsUpdatesState() public {
         uint256 initialTimestamp = block.timestamp;
 
-        // Warp forward to make timestamp change
         vm.warp(block.timestamp + 1);
 
         _requestAndFulfillRandomness();
 
-        // Check state updated
         assertEq(uint256(spotlightSelector.getSelectionStatus()), uint256(SpotlightSelector.SelectionStatus.IDLE));
         assertGt(spotlightSelector.lastSelectionTimestamp(), initialTimestamp);
     }
@@ -221,7 +216,6 @@ contract SpotlightSelectorTest is Test {
     function testFulfillRandomWordsEmitsEvent() public {
         uint256 requestId = spotlightSelector.requestRandomWinner();
         
-        // Expect the CreatorsSelected event (ignore the exact creators array)
         vm.expectEmit(false, false, false, false);
         emit CreatorsSelected(new address[](5), block.timestamp);
         
@@ -233,7 +227,6 @@ contract SpotlightSelectorTest is Test {
 
         address[] memory featured = spotlightSelector.getCurrentFeatured();
 
-        // Check that selected creators have updated timestamps
         for (uint256 i = 0; i < featured.length; i++) {
             uint256 lastFeatured = creatorRegistry.getLastFeaturedTimestamp(featured[i]);
             assertEq(lastFeatured, block.timestamp);
@@ -245,7 +238,6 @@ contract SpotlightSelectorTest is Test {
 
         address[] memory featured = spotlightSelector.getCurrentFeatured();
 
-        // Check no duplicates
         for (uint256 i = 0; i < featured.length; i++) {
             for (uint256 j = i + 1; j < featured.length; j++) {
                 assertTrue(featured[i] != featured[j], "Duplicate creator found");
@@ -254,7 +246,6 @@ contract SpotlightSelectorTest is Test {
     }
 
     function testFulfillRandomWordsWithFewerCreatorsThanSlots() public {
-        // Deploy new registry with only 3 creators
         CreatorRegistry smallRegistry = new CreatorRegistry();
 
         vm.prank(creator1);
@@ -270,11 +261,9 @@ contract SpotlightSelectorTest is Test {
 
         vrfCoordinator.addConsumer(subscriptionId, address(smallSelector));
 
-        // Request and fulfill
         uint256 requestId = smallSelector.requestRandomWinner();
         vrfCoordinator.fulfillRandomWords(requestId, address(smallSelector));
 
-        // Should feature all 3 creators
         address[] memory featured = smallSelector.getCurrentFeatured();
         assertEq(featured.length, 3, "Should feature all available creators");
     }
@@ -283,38 +272,28 @@ contract SpotlightSelectorTest is Test {
                         WEIGHTED SELECTION TESTS
     //////////////////////////////////////////////////////////////*/
     function testWeightedSelectionFavorsNeverFeaturedCreators() public {
-        // Feature some creators first
         _requestAndFulfillRandomness();
 
-        // Add new creator who was never featured
         address newCreator = makeAddr("newCreator");
         vm.prank(newCreator);
         creatorRegistry.registerCreator("ipfs://newCreator");
 
-        // Fast forward and select again
         vm.warp(block.timestamp + SELECTION_INTERVAL + 1);
         _requestAndFulfillRandomness();
 
-        // The new creator should have high chance of being featured
-        // (We can't test probability in single run, but we can check they CAN be selected)
         address[] memory featured = spotlightSelector.getCurrentFeatured();
         assertTrue(featured.length == FEATURED_SLOTS);
     }
 
     function testWeightedSelectionUpdatesWeightsOverTime() public {
-        // First selection
         _requestAndFulfillRandomness();
         address[] memory firstFeatured = spotlightSelector.getCurrentFeatured();
 
-        // Fast forward 6 months
         vm.warp(block.timestamp + 180 days);
 
-        // Second selection (after interval passed)
         _requestAndFulfillRandomness();
         address[] memory secondFeatured = spotlightSelector.getCurrentFeatured();
 
-        // Creators from first selection should have high weight now
-        // (Some should likely appear again due to time passed)
         assertTrue(secondFeatured.length == FEATURED_SLOTS);
     }
 
@@ -365,27 +344,21 @@ contract SpotlightSelectorTest is Test {
     function testCanRequestSelectionTooSoon() public {
         _requestAndFulfillRandomness();
 
-        // Immediately after selection
         assertFalse(spotlightSelector.canRequestSelection());
 
-        // After 6 days (not enough)
         vm.warp(block.timestamp + 6 days);
         assertFalse(spotlightSelector.canRequestSelection());
 
-        // After 7 days (exactly)
         vm.warp(block.timestamp + 1 days);
         assertTrue(spotlightSelector.canRequestSelection());
     }
 
     function testGetSelectionStatus() public {
-        // Initially IDLE
         assertEq(uint256(spotlightSelector.getSelectionStatus()), uint256(SpotlightSelector.SelectionStatus.IDLE));
 
-        // During selection
         spotlightSelector.requestRandomWinner();
         assertEq(uint256(spotlightSelector.getSelectionStatus()), uint256(SpotlightSelector.SelectionStatus.SELECTING));
 
-        // After fulfillment
         vrfCoordinator.fulfillRandomWords(1, address(spotlightSelector));
         assertEq(uint256(spotlightSelector.getSelectionStatus()), uint256(SpotlightSelector.SelectionStatus.IDLE));
     }
@@ -394,40 +367,33 @@ contract SpotlightSelectorTest is Test {
                         INTEGRATION TESTS
     //////////////////////////////////////////////////////////////*/
     function testMultipleSelectionCycles() public {
-        // First cycle
         _requestAndFulfillRandomness();
         address[] memory featured1 = spotlightSelector.getCurrentFeatured();
         assertEq(featured1.length, FEATURED_SLOTS);
 
-        // Second cycle
         vm.warp(block.timestamp + SELECTION_INTERVAL + 1);
         _requestAndFulfillRandomness();
         address[] memory featured2 = spotlightSelector.getCurrentFeatured();
         assertEq(featured2.length, FEATURED_SLOTS);
 
-        // Third cycle
         vm.warp(block.timestamp + SELECTION_INTERVAL + 1);
         _requestAndFulfillRandomness();
         address[] memory featured3 = spotlightSelector.getCurrentFeatured();
         assertEq(featured3.length, FEATURED_SLOTS);
 
-        // Check history
         assertEq(spotlightSelector.getSelectionHistoryLength(), 3);
     }
 
     function testSelectionWithDynamicCreatorGrowth() public {
-        // Initial selection with 6 creators
         _requestAndFulfillRandomness();
         assertEq(spotlightSelector.getCurrentFeatured().length, 5);
 
-        // Add more creators
         for (uint256 i = 7; i <= 10; i++) {
             address newCreator = makeAddr(string(abi.encodePacked("creator", i)));
             vm.prank(newCreator);
             creatorRegistry.registerCreator(string(abi.encodePacked("ipfs://creator", i)));
         }
 
-        // New selection with 10 creators
         vm.warp(block.timestamp + SELECTION_INTERVAL + 1);
         _requestAndFulfillRandomness();
         assertEq(spotlightSelector.getCurrentFeatured().length, 5);
@@ -451,7 +417,6 @@ contract SpotlightSelectorTest is Test {
         uint256 exactTime = block.timestamp + SELECTION_INTERVAL;
         vm.warp(exactTime);
 
-        // Should work at exact boundary
         uint256 requestId = spotlightSelector.requestRandomWinner();
         assertTrue(requestId > 0);
     }
@@ -467,7 +432,6 @@ contract SpotlightSelectorTest is Test {
 
         assertEq(spotlightSelector.getSelectionHistoryLength(), 5);
 
-        // Verify each history entry
         for (uint256 i = 0; i < 5; i++) {
             SpotlightSelector.Selection memory selection = spotlightSelector.getSelectionHistory(i);
             assertTrue(selection.creators.length > 0);
@@ -478,10 +442,8 @@ contract SpotlightSelectorTest is Test {
     function testLongTimeBetweenSelections() public {
         _requestAndFulfillRandomness();
 
-        // Fast forward 1 year
         vm.warp(block.timestamp + 365 days);
 
-        // Should still work
         uint256 requestId = spotlightSelector.requestRandomWinner();
         assertTrue(requestId > 0);
     }
