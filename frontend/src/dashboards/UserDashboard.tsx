@@ -4,18 +4,28 @@ import {
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { useContracts } from "../hooks/useContracts";
-import { useAccount } from "wagmi";
+import { useAccount, useConfig } from "wagmi";
 import { useIsCreator } from "../hooks/useIsCreator";
 import { Link } from "react-router-dom";
 import { CreatorCard } from "../components/CreatorCard";
+import { useState, useEffect } from "react";
+import { readContract } from "@wagmi/core";
 
 export function UserDashboard() {
   const contracts = useContracts();
+  const config = useConfig();
   const { address } = useAccount();
-   const { isCreator, isLoading: isCheckingCreator } = useIsCreator(address);
-
-console.log('Am I a creator?', isCreator);
-console.log('My address:', address);
+  const { isCreator } = useIsCreator(address);
+  const [showRegistrationModal, setShowRegistrationModal] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [formData, setFormData] = useState({
+    name: "",
+    bio: "",
+    twitter: "",
+    instagram: "",
+    youtube: "",
+    website: "",
+  });
  
   const { data, isLoading } = useReadContract({
     address: contracts.creatorRegistry.address,
@@ -32,15 +42,39 @@ console.log('My address:', address);
   });
   const featuredCreators = featuredData as readonly `0x${string}`[] | undefined;
 
-  const mySubscriptions = creators?.filter((creatorAddress) => {
-    const { data: isSubscribedData } = useReadContract({
-      address: contracts.subscriptionManager.address,
-      abi: contracts.subscriptionManager.abi,
-      functionName: "isSubscribed",
-      args: address ? [address, creatorAddress] : undefined,
-    });
-    return isSubscribedData as boolean | undefined;
-  });
+  const [mySubscriptions, setMySubscriptions] = useState<readonly `0x${string}`[]>([]);
+
+  useEffect(() => {
+    if (!creators || !address) {
+      setMySubscriptions([]);
+      return;
+    }
+
+    const checkSubscriptions = async () => {
+      const subscribed: `0x${string}`[] = [];
+      
+      for (const creatorAddress of creators) {
+        try {
+          const isSubscribed = await readContract(config, {
+            address: contracts.subscriptionManager.address,
+            abi: contracts.subscriptionManager.abi,
+            functionName: "isSubscribed",
+            args: [address, creatorAddress],
+          });
+          
+          if (isSubscribed) {
+            subscribed.push(creatorAddress);
+          }
+        } catch (error) {
+          console.error(`Error checking subscription for ${creatorAddress}:`, error);
+        }
+      }
+      
+      setMySubscriptions(subscribed);
+    };
+
+    checkSubscriptions();
+  }, [creators, address, contracts.subscriptionManager, config]);
 
   const { writeContract, data: hash } = useWriteContract();
 
@@ -48,14 +82,86 @@ console.log('My address:', address);
     hash,
   });
 
- const handleRegister = () => {
-  writeContract({
-    address: contracts.creatorRegistry.address,
-    abi: contracts.creatorRegistry.abi,
-    functionName: "registerCreator",
-    args: [""],
-  });
-};
+  const handleRegisterClick = () => {
+    setShowRegistrationModal(true);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value,
+    });
+  };
+
+  const uploadToIPFS = async (metadata: any) => {
+    const metadataString = JSON.stringify(metadata);
+    const hash = Array.from(metadataString)
+      .reduce((acc, char) => ((acc << 5) - acc) + char.charCodeAt(0), 0)
+      .toString(16)
+      .padStart(46, '0')
+      .slice(0, 46);
+    
+    return `ipfs://Qm${hash}`;
+  };
+
+  const handleRegister = async () => {
+    if (!formData.name.trim()) {
+      alert("Please enter your name");
+      return;
+    }
+
+    setIsUploading(true);
+
+    try {
+      const metadata = {
+        name: formData.name,
+        bio: formData.bio,
+        social: {
+          twitter: formData.twitter,
+          instagram: formData.instagram,
+          youtube: formData.youtube,
+          website: formData.website,
+        },
+        createdAt: new Date().toISOString(),
+      };
+
+      const ipfsUri = await uploadToIPFS(metadata);
+
+      writeContract({
+        address: contracts.creatorRegistry.address,
+        abi: contracts.creatorRegistry.abi,
+        functionName: "registerCreator",
+        args: [ipfsUri],
+      });
+      
+      setShowRegistrationModal(false);
+      setFormData({
+        name: "",
+        bio: "",
+        twitter: "",
+        instagram: "",
+        youtube: "",
+        website: "",
+      });
+      setIsUploading(false);
+    } catch (error) {
+      setIsUploading(false);
+      alert("Failed to register. Please try again.");
+      console.error(error);
+    }
+  };
+
+  const handleCloseModal = () => {
+    setShowRegistrationModal(false);
+    setFormData({
+      name: "",
+      bio: "",
+      twitter: "",
+      instagram: "",
+      youtube: "",
+      website: "",
+    });
+  };
 
   return (
     <div className="space-y-8">
@@ -82,13 +188,11 @@ console.log('My address:', address);
               </p>
             </div>
             <button
-              onClick={handleRegister}
+              onClick={handleRegisterClick}
               disabled={isConfirming}
               className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
             >
-              {isConfirming
-                ? "Check Wallet..."
-                  : "Register Now"}
+              {isConfirming ? "Check Wallet..." : "Register Now"}
             </button>
           </div>
           {isSuccess && (
@@ -122,6 +226,122 @@ console.log('My address:', address);
             </Link>
           </div>
         </section>
+      )}
+
+      {showRegistrationModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+              Create Your Creator Profile
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Share your information so subscribers can discover and connect with you.
+            </p>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Name *
+                </label>
+                <input
+                  type="text"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleInputChange}
+                  placeholder="Your creator name"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Bio
+                </label>
+                <textarea
+                  name="bio"
+                  value={formData.bio}
+                  onChange={handleInputChange}
+                  placeholder="Tell your audience about yourself..."
+                  rows={3}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Twitter/X
+                </label>
+                <input
+                  type="text"
+                  name="twitter"
+                  value={formData.twitter}
+                  onChange={handleInputChange}
+                  placeholder="@username or profile link"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Instagram
+                </label>
+                <input
+                  type="text"
+                  name="instagram"
+                  value={formData.instagram}
+                  onChange={handleInputChange}
+                  placeholder="@username or profile link"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  YouTube
+                </label>
+                <input
+                  type="text"
+                  name="youtube"
+                  value={formData.youtube}
+                  onChange={handleInputChange}
+                  placeholder="Channel name or link"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Website
+                </label>
+                <input
+                  type="text"
+                  name="website"
+                  value={formData.website}
+                  onChange={handleInputChange}
+                  placeholder="https://yourwebsite.com"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleCloseModal}
+                disabled={isUploading}
+                className="flex-1 px-6 py-3 bg-gray-200 text-gray-900 font-medium rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRegister}
+                disabled={isUploading}
+                className="flex-1 px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUploading ? "Uploading..." : "Register"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <section>
