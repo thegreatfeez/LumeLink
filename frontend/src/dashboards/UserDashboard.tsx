@@ -10,6 +10,7 @@ import { Link } from "react-router-dom";
 import { CreatorCard } from "../components/CreatorCard";
 import { useState, useEffect } from "react";
 import { readContract } from "@wagmi/core";
+import { uploadToIPFS } from "../utils/ipfs";
 
 export function UserDashboard() {
   const contracts = useContracts();
@@ -91,17 +92,6 @@ export function UserDashboard() {
       ...formData,
       [e.target.name]: e.target.value,
     });
-  };
-
-  const uploadToIPFS = async (metadata: any) => {
-    const metadataString = JSON.stringify(metadata);
-    const hash = Array.from(metadataString)
-      .reduce((acc, char) => ((acc << 5) - acc) + char.charCodeAt(0), 0)
-      .toString(16)
-      .padStart(46, '0')
-      .slice(0, 46);
-    
-    return `ipfs://Qm${hash}`;
   };
 
   const handleRegister = async () => {

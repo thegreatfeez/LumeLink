@@ -5,7 +5,7 @@ import {
 } from "wagmi";
 import { useContracts } from "../hooks/useContracts";
 import { useAccount } from "wagmi";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { parseEther, formatEther, isAddress } from "viem";
 
 export function TreasuryDashboard() {
@@ -36,11 +36,18 @@ export function TreasuryDashboard() {
   const totalFees = totalFeesData as bigint | undefined;
   const currentBalance = currentBalanceData as bigint | undefined;
 
+  useEffect(() => {
+    if (isSuccess) {
+      setRecipientAddress("");
+      setWithdrawAmount("");
+    }
+  }, [isSuccess]);
+
   const handleWithdrawAll = () => {
     if (!address) return;
 
     if (!currentBalance || currentBalance === 0n) {
-      console.error("No balance");
+      alert("No balance to withdraw");
       return;
     }
 
@@ -49,17 +56,29 @@ export function TreasuryDashboard() {
       abi: contracts.treasury.abi,
       functionName: "withdraw",
     });
+    
+    setShowWithdrawAllModal(false);
   };
 
   const handleWithdrawTo = () => {
-    if (!address || !isAddress(recipientAddress)) {
-      console.error("Invalid address");
+    if (!recipientAddress || !isAddress(recipientAddress)) {
+      alert("Please enter a valid Ethereum address");
       return;
     }
 
-    const amountNum = Number(withdrawAmount);
+    if (!withdrawAmount || withdrawAmount.trim() === "") {
+      alert("Please enter an amount to withdraw");
+      return;
+    }
+
+    const amountNum = parseFloat(withdrawAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
-      console.error("Invalid amount");
+      alert("Please enter a valid amount greater than 0");
+      return;
+    }
+
+    if (currentBalance && parseEther(withdrawAmount) > currentBalance) {
+      alert(`Insufficient balance. Available: ${formatEther(currentBalance)} ETH`);
       return;
     }
 
@@ -67,7 +86,7 @@ export function TreasuryDashboard() {
       address: contracts.treasury.address,
       abi: contracts.treasury.abi,
       functionName: "withdrawTo",
-      args: [recipientAddress, parseEther(withdrawAmount)],
+      args: [recipientAddress as `0x${string}`, parseEther(withdrawAmount)],
     });
   };
 
